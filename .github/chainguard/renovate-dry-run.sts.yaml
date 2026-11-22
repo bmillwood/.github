@@ -2,6 +2,7 @@
 issuer: https://token.actions.githubusercontent.com
 subject_pattern: repo:bmillwood/renovateconfig:.*
 
+app: renovate
 permissions:
   contents: read
   workflows: read

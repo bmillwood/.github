@@ -2,6 +2,7 @@
 issuer: https://token.actions.githubusercontent.com
 subject: repo:bmillwood/renovateconfig:ref:refs/heads/main
 
+app: renovate
 permissions:
   contents: write
   workflows: write
