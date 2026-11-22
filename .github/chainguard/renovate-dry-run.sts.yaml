@@ -1,0 +1,10 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/octo-sts/app/refs/heads/main/pkg/octosts/octosts.OrgTrustPolicy.json
+issuer: https://token.actions.githubusercontent.com
+subject_pattern: repo:bmillwood/renovateconfig:.*
+
+permissions:
+  contents: read
+  workflows: read
+  pull_requests: read
+  issues: read
+  vulnerability_alerts: read
