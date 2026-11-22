@@ -22,11 +22,11 @@ import cyclopts
 import pydantic
 
 from repo_maintenance import (
+    baseline,
     branch_protection,
     claude_setup,
     github,
     plan,
-    quality_of_life,
     renovate_setup,
     survey,
 )
@@ -169,11 +169,11 @@ def _run(
     sys.exit(0 if all(results) else 1)
 
 
-@app.command(help=quality_of_life.__doc__)
-def _quality_of_life(
+@app.command(help=baseline.__doc__)
+def _baseline(
     *repos: Repo, all_owned_by: AllOwnedBy = (), apply: Apply = False
 ) -> None:
-    _run(repos=repos, owners=all_owned_by, steps=[quality_of_life.step], apply=apply)
+    _run(repos=repos, owners=all_owned_by, steps=[baseline.step], apply=apply)
 
 
 @app.command(help=branch_protection.__doc__)
