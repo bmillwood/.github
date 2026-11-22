@@ -3,7 +3,8 @@
 - No wiki or projects.
 - Merge commits only, no squash or rebase merges.
 - Delete head branches once their PRs are merged.
-- Always suggest updating PR branches, and allow auto-merge.
+- Always suggest updating PR branches, and allow auto-merge (so the repo must
+  be public, since we assume private repos are on a free plan).
 """
 
 import pydantic
@@ -44,6 +45,9 @@ def step(repo: plan.Repository) -> list[plan.Change]:
     )
     have_fields = have.model_dump()
     patch = {k: v for k, v in DESIRED.model_dump().items() if have_fields[k] != v}
+    if repo.private and "allow_auto_merge" in patch:
+        # On a free plan, GitHub accepts the PATCH but ignores it.
+        raise plan.CannotPlan("auto-merge isn't available for private repos")
     if not patch:
         return []
     return [

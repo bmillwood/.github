@@ -19,6 +19,7 @@ class Repository(pydantic.BaseModel):
     id: int
     full_name: str
     default_branch: str
+    private: bool
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
