@@ -6,7 +6,7 @@
 - Always suggest updating PR branches, and allow auto-merge (so the repo must
   be public, since we assume private repos are on a free plan).
 - Require approval to run Actions workflows on fork PRs from all external
-  contributors (public repos only, since private ones have separate controls).
+  contributors.
 """
 
 import pydantic
@@ -76,8 +76,6 @@ class ForkPrApproval(pydantic.BaseModel):
 
 
 def _fork_pr_approval(repo: plan.Repository) -> list[plan.Change]:
-    if repo.private:
-        return []
     path = f"/repos/{repo.full_name}/actions/permissions/fork-pr-contributor-approval"
     have = ForkPrApproval.model_validate_json(github.request("GET", path))
     want = ForkPrApproval(approval_policy="all_external_contributors")
