@@ -3,6 +3,11 @@ on:
     branches:
     - main
   pull_request:
+    paths:
+    - .github/workflows/python.yml
+    - pyproject.toml
+    - src/**.py
+    - uv.lock
 
 jobs:
   check:
