@@ -212,8 +212,7 @@ def _renovate_setup(
     # mutable result would be shared between calls. Paths are immutable, so
     # that's harmless, and evaluating it up front lets --help show it.
     app_dir: Annotated[
-        # Not ExistingDirectory: it's only needed if there's something to set.
-        pathlib.Path,
+        cyclopts.types.ExistingDirectory,
         cyclopts.Parameter(
             env_var="RENOVATE_APP_DIR",
             help="Directory with the Renovate app's client_id.txt and private key.",
