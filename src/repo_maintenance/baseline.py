@@ -1,6 +1,7 @@
 """Set the repository options we want on every repo.
 
-- No wiki or projects.
+- No wiki or projects, unless there's a wiki page or a project linked to the
+  repo, since disabling them would hide those.
 - Merge commits only, no squash or rebase merges.
 - Delete head branches once their PRs are merged.
 - Always suggest updating PR branches, and allow auto-merge (so the repo must
@@ -51,6 +52,12 @@ def _repository_settings(repo: plan.Repository) -> list[plan.Change]:
     )
     have_fields = have.model_dump()
     patch = {k: v for k, v in DESIRED.model_dump().items() if have_fields[k] != v}
+    if patch.get("has_wiki") is False and github.wiki_has_pages(repo.full_name):
+        raise plan.CannotPlan("the wiki has pages, which disabling it would hide")
+    if patch.get("has_projects") is False and _linked_project_count(repo) > 0:
+        raise plan.CannotPlan(
+            "projects are linked to the repo, which disabling projects would hide"
+        )
     if repo.private and "allow_auto_merge" in patch:
         # On a free plan, GitHub accepts the PATCH but ignores it.
         raise plan.CannotPlan("auto-merge isn't available for private repos")
@@ -67,6 +74,35 @@ def _repository_settings(repo: plan.Repository) -> list[plan.Change]:
             ),
         )
     ]
+
+
+class _ProjectsV2(pydantic.BaseModel):
+    totalCount: int
+
+
+class _Repository(pydantic.BaseModel):
+    projectsV2: _ProjectsV2
+
+
+class _ProjectsQuery(pydantic.BaseModel):
+    repository: _Repository
+
+
+def _linked_project_count(repo: plan.Repository) -> int:
+    # Only Projects (v2): classic projects are gone, even from the API.
+    owner, name = repo.full_name.split("/")
+    data = github.graphql(
+        """
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            projectsV2 { totalCount }
+          }
+        }
+        """,
+        owner=owner,
+        name=name,
+    )
+    return _ProjectsQuery.model_validate(data).repository.projectsV2.totalCount
 
 
 class ForkPrApproval(pydantic.BaseModel):

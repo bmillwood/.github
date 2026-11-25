@@ -13,6 +13,9 @@ uv run repo-maintenance SURVEY OWNER/REPO...              # read-only report
 
 `--help` describes each operation.
 
+`baseline` checks for linked projects before disabling them, which needs the
+`read:project` scope: `gh auth refresh --scopes read:project`.
+
 ## Development
 
 ```sh
