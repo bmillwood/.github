@@ -12,7 +12,6 @@ left.
 
 import io
 import json
-import pathlib
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -27,7 +26,6 @@ from repo_maintenance import (
     claude_setup,
     github,
     plan,
-    renovate_setup,
     survey,
 )
 
@@ -200,31 +198,6 @@ def _claude_setup(
             branch_protection.step,
             lambda repo: claude_setup.step(repo, app_private_key=app_private_key),
         ],
-        apply=apply,
-    )
-
-
-@app.command(help=renovate_setup.__doc__)
-def _renovate_setup(
-    *repos: Repo,
-    # The noqa on the default below is for B008, which flags function calls in
-    # defaults: they're evaluated once, when the function is defined, so a
-    # mutable result would be shared between calls. Paths are immutable, so
-    # that's harmless, and evaluating it up front lets --help show it.
-    app_dir: Annotated[
-        cyclopts.types.ExistingDirectory,
-        cyclopts.Parameter(
-            env_var="RENOVATE_APP_DIR",
-            help="Directory with the Renovate app's client_id.txt and private key.",
-        ),
-    ] = pathlib.Path.home() / ".config/renovate-app",  # noqa: B008
-    all_owned_by: AllOwnedBy = (),
-    apply: Apply = False,
-) -> None:
-    _run(
-        repos=repos,
-        owners=all_owned_by,
-        steps=[lambda repo: renovate_setup.step(repo, app_dir=app_dir)],
         apply=apply,
     )
 
