@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 import jwt
+import nacl.public
 import pydantic
 
 
@@ -105,6 +106,29 @@ def graphql(query: str, **variables: pydantic.JsonValue) -> pydantic.JsonValue:
             message="; ".join(error.message for error in response.errors),
         )
     return response.data
+
+
+class _PublicKey(pydantic.BaseModel):
+    key_id: str
+    key: str
+
+
+def put_secret(path: str, *, public_key_path: str, value: pydantic.SecretStr) -> None:
+    """Create or update an Actions secret, which GitHub wants sealed to its key."""
+    public_key = _PublicKey.model_validate_json(request("GET", public_key_path))
+    sealed = nacl.public.SealedBox(
+        nacl.public.PublicKey(base64.b64decode(public_key.key))
+    ).encrypt(value.get_secret_value().encode())
+    request(
+        "PUT",
+        path,
+        body=json.dumps(
+            {
+                "encrypted_value": base64.b64encode(sealed).decode(),
+                "key_id": public_key.key_id,
+            }
+        ),
+    )
 
 
 def wiki_has_pages(repo_name: str) -> bool:

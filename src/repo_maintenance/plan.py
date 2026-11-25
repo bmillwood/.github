@@ -33,6 +33,22 @@ class ApiCall:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class SetSecret:
+    """PUT an Actions secret, encrypted with the key from public_key_path.
+
+    Encrypting only when applying means the key needn't exist when planning,
+    e.g. if it belongs to an environment that an earlier change creates.
+    """
+
+    path: str
+    public_key_path: str
+    value: pydantic.SecretStr
+
+    def __str__(self) -> str:
+        return f"PUT {self.path}"
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class ManualStep:
     """Something we can't (or would rather not) do via the API."""
 
@@ -46,7 +62,7 @@ class ManualStep:
 class Change:
     description: str
     detail: str = ""
-    action: ApiCall | ManualStep
+    action: ApiCall | SetSecret | ManualStep
 
 
 type Step = Callable[[Repository], list[Change]]

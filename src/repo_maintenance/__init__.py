@@ -27,6 +27,7 @@ from repo_maintenance import (
     app_installation,
     baseline,
     branch_protection,
+    cachix_setup,
     claude_setup,
     github,
     plan,
@@ -78,12 +79,14 @@ def _plan(*, repo_name: str, steps: Sequence[plan.Step]) -> list[plan.Change] | 
     return changes
 
 
-def _do(action: plan.ApiCall | plan.ManualStep) -> None:
+def _do(action: plan.ApiCall | plan.SetSecret | plan.ManualStep) -> None:
     match action:
         case plan.ApiCall(method=method, path=path, body=body):
             github.request(
                 method, path, body=None if body is None else json.dumps(body)
             )
+        case plan.SetSecret(path=path, public_key_path=public_key_path, value=value):
+            github.put_secret(path, public_key_path=public_key_path, value=value)
         case plan.ManualStep(instruction=instruction):
             input(f"{instruction}, then press Enter: ")
 
@@ -213,6 +216,34 @@ def _claude_setup(
         repos=repos,
         owners=all_owned_by,
         steps=_claude_setup_steps(app_private_key),
+        apply=apply,
+    )
+
+
+@app.command(help=cachix_setup.__doc__)
+def _cachix_setup(
+    *repos: Repo,
+    signing_key_file: Annotated[
+        cyclopts.types.ExistingFile,
+        cyclopts.Parameter(help="File containing the Cachix signing key."),
+    ],
+    auth_token_file: Annotated[
+        cyclopts.types.ExistingFile,
+        cyclopts.Parameter(help="File containing a Cachix auth token that can push."),
+    ],
+    all_owned_by: AllOwnedBy = (),
+    apply: Apply = False,
+) -> None:
+    signing_key = pydantic.SecretStr(signing_key_file.read_text().strip())
+    auth_token = pydantic.SecretStr(auth_token_file.read_text().strip())
+    _run(
+        repos=repos,
+        owners=all_owned_by,
+        steps=[
+            lambda repo: cachix_setup.step(
+                repo, signing_key=signing_key, auth_token=auth_token
+            )
+        ],
         apply=apply,
     )
 
