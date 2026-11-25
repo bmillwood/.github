@@ -34,7 +34,8 @@ class ErrorBody(pydantic.BaseModel):
 
 
 class GraphQLResponse(pydantic.BaseModel):
-    data: pydantic.JsonValue
+    # Absent if errors prevented execution entirely, e.g. for lack of permission.
+    data: pydantic.JsonValue = None
     errors: list[ErrorBody] = []
 
 
