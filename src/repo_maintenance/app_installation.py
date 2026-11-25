@@ -16,6 +16,16 @@ class Installation(pydantic.BaseModel):
     id: int
 
 
+def installed(repo_name: str, *, client_id: str, private_key: pathlib.Path) -> bool:
+    as_app = github.app_jwt(client_id=client_id, private_key=private_key)
+    try:
+        # 404s if the repo isn't in the installation.
+        github.request("GET", f"/repos/{repo_name}/installation", token=as_app)
+    except github.NotFound:
+        return False
+    return True
+
+
 def step(
     repo: plan.Repository,
     *,
@@ -23,14 +33,9 @@ def step(
     client_id: str,
     private_key: pathlib.Path,
 ) -> list[plan.Change]:
-    as_app = github.app_jwt(client_id=client_id, private_key=private_key)
-    try:
-        # 404s if the repo isn't in the installation.
-        github.request("GET", f"/repos/{repo.full_name}/installation", token=as_app)
-    except github.NotFound:
-        pass
-    else:
+    if installed(repo.full_name, client_id=client_id, private_key=private_key):
         return []
+    as_app = github.app_jwt(client_id=client_id, private_key=private_key)
     owner = repo.full_name.split("/")[0]
     installation = Installation.model_validate_json(
         github.request("GET", f"/users/{owner}/installation", token=as_app)

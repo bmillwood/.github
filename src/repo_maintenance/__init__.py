@@ -10,8 +10,11 @@ would. With --apply, they make the changes, then check again that nothing is
 left.
 """
 
+import contextlib
+import dataclasses
 import io
 import json
+import pathlib
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -21,11 +24,13 @@ import cyclopts
 import pydantic
 
 from repo_maintenance import (
+    app_installation,
     baseline,
     branch_protection,
     claude_setup,
     github,
     plan,
+    rounds,
     survey,
 )
 
@@ -83,11 +88,13 @@ def _do(action: plan.ApiCall | plan.ManualStep) -> None:
             input(f"{instruction}, then press Enter: ")
 
 
-def _sync(*, repo_name: str, steps: Sequence[plan.Step], apply: bool) -> bool:
-    """Whether the repo is (now) in sync."""
+def _sync(
+    *, repo_name: str, steps: Sequence[plan.Step], apply: bool
+) -> list[plan.Change] | None:
+    """The changes (still) needed, or None if we couldn't tell."""
     changes = _plan(repo_name=repo_name, steps=steps)
     if not changes or not apply:
-        return changes == []
+        return changes
     for change in changes:
         print(f"{repo_name}: {change.action}")
         try:
@@ -97,7 +104,7 @@ def _sync(*, repo_name: str, steps: Sequence[plan.Step], apply: bool) -> bool:
             print(f"{repo_name}: not attempting any further changes", file=sys.stderr)
             break
     print(f"{repo_name}: re-checking")
-    return _plan(repo_name=repo_name, steps=steps) == []
+    return _plan(repo_name=repo_name, steps=steps)
 
 
 class _Owner(pydantic.BaseModel):
@@ -162,7 +169,8 @@ def _run(
 ) -> None:
     repos = _repo_names(repos=repos, owners=owners)
     results = [
-        _sync(repo_name=repo_name, steps=steps, apply=apply) for repo_name in repos
+        _sync(repo_name=repo_name, steps=steps, apply=apply) == []
+        for repo_name in repos
     ]
     sys.exit(0 if all(results) else 1)
 
@@ -181,23 +189,30 @@ def _branch_protection(
     _run(repos=repos, owners=all_owned_by, steps=[branch_protection.step], apply=apply)
 
 
+ClaudeAppPrivateKey = Annotated[
+    cyclopts.types.ExistingFile,
+    cyclopts.Parameter(help=f"Private key of the {claude_setup.APP_SLUG} app."),
+]
+
+
+def _claude_setup_steps(app_private_key: pathlib.Path) -> list[plan.Step]:
+    return [
+        branch_protection.step,
+        lambda repo: claude_setup.step(repo, app_private_key=app_private_key),
+    ]
+
+
 @app.command(help=claude_setup.__doc__)
 def _claude_setup(
     *repos: Repo,
-    app_private_key: Annotated[
-        cyclopts.types.ExistingFile,
-        cyclopts.Parameter(help=f"Private key of the {claude_setup.APP_SLUG} app."),
-    ],
+    app_private_key: ClaudeAppPrivateKey,
     all_owned_by: AllOwnedBy = (),
     apply: Apply = False,
 ) -> None:
     _run(
         repos=repos,
         owners=all_owned_by,
-        steps=[
-            branch_protection.step,
-            lambda repo: claude_setup.step(repo, app_private_key=app_private_key),
-        ],
+        steps=_claude_setup_steps(app_private_key),
         apply=apply,
     )
 
@@ -220,6 +235,84 @@ def _secrets_survey(*repos: Repo, all_owned_by: AllOwnedBy = ()) -> None:
 @app.command(help=survey.collaborators.__doc__)
 def _collaborators_survey(*repos: Repo, all_owned_by: AllOwnedBy = ()) -> None:
     _survey(repos=repos, owners=all_owned_by, describe=survey.collaborators)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _Cell:
+    text: str
+    # Whether this is fine as it is, for the exit status.
+    ok: bool
+
+
+def _changes_cell(changes: list[plan.Change] | None) -> _Cell:
+    match changes:
+        case None:
+            return _Cell(text="error", ok=False)
+        case []:
+            return _Cell(text="in sync", ok=True)
+        case _:
+            return _Cell(text=f"{len(changes)} change(s) needed", ok=False)
+
+
+def _claude_setup_cell(
+    repo_name: str, *, claude_private_key: pathlib.Path, apply: bool
+) -> _Cell:
+    try:
+        claude_app_installed = app_installation.installed(
+            repo_name,
+            client_id=claude_setup.APP_CLIENT_ID,
+            private_key=claude_private_key,
+        )
+    except github.RequestFailed as error:
+        print(f"{repo_name}: {error}", file=sys.stderr)
+        return _Cell(text="error", ok=False)
+    if not claude_app_installed:
+        return _Cell(text="app not installed", ok=True)
+    return _changes_cell(
+        _sync(
+            repo_name=repo_name,
+            steps=_claude_setup_steps(claude_private_key),
+            apply=apply,
+        )
+    )
+
+
+def _survey_cell(repo_name: str, *, describe: Callable[[str], frozenset[str]]) -> _Cell:
+    try:
+        return _Cell(text=", ".join(sorted(describe(repo_name))) or "(none)", ok=True)
+    except github.RequestFailed as error:
+        print(f"{repo_name}: {error}", file=sys.stderr)
+        return _Cell(text="error", ok=False)
+
+
+@app.command(help=rounds.__doc__)
+def _rounds(*, claude_private_key: ClaudeAppPrivateKey, apply: Apply = False) -> None:
+    with contextlib.redirect_stdout(sys.stderr):
+        rows = {
+            repo_name: [
+                _changes_cell(
+                    _sync(repo_name=repo_name, steps=[baseline.step], apply=apply)
+                ),
+                _claude_setup_cell(
+                    repo_name, claude_private_key=claude_private_key, apply=apply
+                ),
+                _survey_cell(repo_name, describe=survey.collaborators),
+                _survey_cell(repo_name, describe=survey.secret_names),
+            ]
+            for repo_name in rounds.REPOS
+        }
+    print(
+        rounds.format_table(
+            [
+                ["repo", "baseline", "claude-setup", "collaborators", "secrets"],
+                *(
+                    [repo_name] + [cell.text for cell in cells]
+                    for repo_name, cells in rows.items()
+                ),
+            ]
+        )
+    )
+    sys.exit(0 if all(cell.ok for cells in rows.values() for cell in cells) else 1)
 
 
 def main() -> None:
