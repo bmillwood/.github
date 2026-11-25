@@ -4,7 +4,9 @@ Requests are made in-process rather than via `gh api`, so that tokens never
 appear on a command line. By default they authenticate with gh's token.
 """
 
+import base64
 import functools
+import json
 import pathlib
 import re
 import subprocess
@@ -29,6 +31,12 @@ class NotFound(RequestFailed):
 
 class ErrorBody(pydantic.BaseModel):
     message: str
+
+
+class GraphQLResponse(pydantic.BaseModel):
+    # Absent if errors prevented execution entirely, e.g. for lack of permission.
+    data: pydantic.JsonValue = None
+    errors: list[ErrorBody] = []
 
 
 @functools.cache
@@ -82,6 +90,43 @@ def request(
     return content
 
 
+def graphql(query: str, **variables: pydantic.JsonValue) -> pydantic.JsonValue:
+    """The data from a GraphQL query, which must succeed completely."""
+    path = "/graphql"
+    response = GraphQLResponse.model_validate_json(
+        request("POST", path, body=json.dumps({"query": query, "variables": variables}))
+    )
+    # GraphQL errors come with HTTP 200, and possibly partial data.
+    if response.errors:
+        raise RequestFailed(
+            method="POST",
+            path=path,
+            status=200,
+            message="; ".join(error.message for error in response.errors),
+        )
+    return response.data
+
+
+def wiki_has_pages(repo_name: str) -> bool:
+    """Whether the repo's wiki has any pages.
+
+    There's no API for wikis, so this asks whether the wiki's git repo exists,
+    which it does once the first page is created. Git over HTTP wants basic
+    auth, not a bearer token.
+    """
+    try:
+        _request(
+            "GET",
+            f"https://github.com/{repo_name}.wiki.git/info/refs?service=git-upload-pack",
+            body=None,
+            token=None,
+            basic_auth=True,
+        )
+    except NotFound:
+        return False
+    return True
+
+
 def get_pages(path: str, *, token: pydantic.SecretStr | None = None) -> list[bytes]:
     """GET every page of a paginated list, following the Link headers."""
     pages = []
@@ -93,17 +138,27 @@ def get_pages(path: str, *, token: pydantic.SecretStr | None = None) -> list[byt
 
 
 def _request(
-    method: str, url: str, *, body: str | None, token: pydantic.SecretStr | None
+    method: str,
+    url: str,
+    *,
+    body: str | None,
+    token: pydantic.SecretStr | None,
+    basic_auth: bool = False,
 ) -> tuple[bytes, str | None]:
     """The response body, and the URL of the next page if there is one."""
     if token is None:
         token = gh_token()
+    if basic_auth:
+        credentials = f"x-access-token:{token.get_secret_value()}".encode()
+        authorization = f"Basic {base64.b64encode(credentials).decode()}"
+    else:
+        authorization = f"Bearer {token.get_secret_value()}"
     req = urllib.request.Request(
         url=url,
         method=method,
         data=None if body is None else body.encode(),
         headers={
-            "Authorization": f"Bearer {token.get_secret_value()}",
+            "Authorization": authorization,
             "Accept": "application/vnd.github+json",
             # Otherwise urllib labels any body as form-encoded.
             "Content-Type": "application/json",
