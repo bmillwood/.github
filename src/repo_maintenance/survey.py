@@ -46,7 +46,7 @@ def secret_names(repo_name: str) -> frozenset[str]:
         for environment in _EnvironmentList.model_validate_json(page).environments
     ]
     return frozenset(_secret_names(f"/repos/{repo_name}/actions/secrets")).union(
-        f"{secret} ({environment})"
+        f"env/{environment}/{secret}"
         for environment in environments
         for secret in _secret_names(
             f"/repos/{repo_name}/environments/"
