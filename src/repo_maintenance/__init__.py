@@ -236,7 +236,7 @@ def _default_branch_environment(
         tuple[str, ...],
         cyclopts.Parameter(
             negative=(),
-            help="Name of a secret to move into the environment. Can be repeated.",
+            help="Name of a secret to set on the environment. Can be repeated.",
         ),
     ],
     all_owned_by: AllOwnedBy = (),

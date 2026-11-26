@@ -14,7 +14,7 @@ from collections.abc import Sequence
 class Visit:
     """What to do for a repo, beyond what's done for all of them."""
 
-    # Secrets to move into the default-branch environment, if any.
+    # Secrets to set on the default-branch environment, if any.
     default_branch_secrets: frozenset[str] = frozenset()
 
 

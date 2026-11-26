@@ -1,10 +1,8 @@
-"""Move secrets into an environment only the default branch can use.
+"""Set secrets on an environment only the default branch can use.
 
 Creates a "default-branch" environment whose only deployment branch is the
 repo's default branch, and sets the named secrets on it. Workflow jobs that
-use the secrets need `environment: default-branch`. Repository secrets of the
-same names are left alone, for you to delete once workflows use the
-environment's.
+use the secrets need `environment: default-branch`.
 
 The environment is named for who can use it rather than what for, so that
 one environment can hold all of a repo's secrets that only merged code
