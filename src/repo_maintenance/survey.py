@@ -2,6 +2,7 @@
 
 import collections
 import sys
+import urllib.parse
 from collections.abc import Callable, Sequence
 
 import pydantic
@@ -17,16 +18,40 @@ class _SecretList(pydantic.BaseModel):
     secrets: list[_Secret]
 
 
+class _Environment(pydantic.BaseModel):
+    name: str
+
+
+class _EnvironmentList(pydantic.BaseModel):
+    environments: list[_Environment]
+
+
+def _secret_names(path: str) -> list[str]:
+    return [
+        secret.name
+        for page in github.get_pages(f"{path}?per_page=100")
+        for secret in _SecretList.model_validate_json(page).secrets
+    ]
+
+
 def secret_names(repo_name: str) -> frozenset[str]:
     """Group repos by the names of their Actions secrets.
 
-    Only repository secrets are included, not environment, Dependabot or
-    organisation ones.
+    Repository and environment secrets are included, the latter as
+    "NAME (environment)", but not Dependabot or organisation ones.
     """
-    return frozenset(
-        secret.name
-        for page in github.get_pages(f"/repos/{repo_name}/actions/secrets?per_page=100")
-        for secret in _SecretList.model_validate_json(page).secrets
+    environments = [
+        environment.name
+        for page in github.get_pages(f"/repos/{repo_name}/environments?per_page=100")
+        for environment in _EnvironmentList.model_validate_json(page).environments
+    ]
+    return frozenset(_secret_names(f"/repos/{repo_name}/actions/secrets")).union(
+        f"{secret} ({environment})"
+        for environment in environments
+        for secret in _secret_names(
+            f"/repos/{repo_name}/environments/"
+            f"{urllib.parse.quote(environment, safe='')}/secrets"
+        )
     )
 
 
