@@ -27,6 +27,7 @@ from repo_maintenance import (
     app_installation,
     baseline,
     branch_protection,
+    cachix_setup,
     claude_setup,
     github,
     plan,
@@ -78,12 +79,14 @@ def _plan(*, repo_name: str, steps: Sequence[plan.Step]) -> list[plan.Change] | 
     return changes
 
 
-def _do(action: plan.ApiCall | plan.ManualStep) -> None:
+def _do(action: plan.ApiCall | plan.SetSecret | plan.ManualStep) -> None:
     match action:
         case plan.ApiCall(method=method, path=path, body=body):
             github.request(
                 method, path, body=None if body is None else json.dumps(body)
             )
+        case plan.SetSecret(path=path, public_key_path=public_key_path, value=value):
+            github.put_secret(path, public_key_path=public_key_path, value=value)
         case plan.ManualStep(instruction=instruction):
             input(f"{instruction}, then press Enter: ")
 
@@ -217,6 +220,46 @@ def _claude_setup(
     )
 
 
+CachixSigningKeyFile = Annotated[
+    cyclopts.types.ExistingFile,
+    cyclopts.Parameter(help="File containing the Cachix signing key."),
+]
+CachixAuthTokenFile = Annotated[
+    cyclopts.types.ExistingFile,
+    cyclopts.Parameter(help="File containing a Cachix auth token that can push."),
+]
+
+
+def _cachix_setup_steps(
+    *, signing_key_file: pathlib.Path, auth_token_file: pathlib.Path
+) -> list[plan.Step]:
+    signing_key = pydantic.SecretStr(signing_key_file.read_text().strip())
+    auth_token = pydantic.SecretStr(auth_token_file.read_text().strip())
+    return [
+        lambda repo: cachix_setup.step(
+            repo, signing_key=signing_key, auth_token=auth_token
+        )
+    ]
+
+
+@app.command(help=cachix_setup.__doc__)
+def _cachix_setup(
+    *repos: Repo,
+    signing_key_file: CachixSigningKeyFile,
+    auth_token_file: CachixAuthTokenFile,
+    all_owned_by: AllOwnedBy = (),
+    apply: Apply = False,
+) -> None:
+    _run(
+        repos=repos,
+        owners=all_owned_by,
+        steps=_cachix_setup_steps(
+            signing_key_file=signing_key_file, auth_token_file=auth_token_file
+        ),
+        apply=apply,
+    )
+
+
 def _survey(
     *,
     repos: Sequence[str],
@@ -286,7 +329,17 @@ def _survey_cell(repo_name: str, *, describe: Callable[[str], frozenset[str]]) -
 
 
 @app.command(help=rounds.__doc__)
-def _rounds(*, claude_private_key: ClaudeAppPrivateKey, apply: Apply = False) -> None:
+def _rounds(
+    *,
+    claude_private_key: ClaudeAppPrivateKey,
+    cachix_signing_key_file: CachixSigningKeyFile,
+    cachix_auth_token_file: CachixAuthTokenFile,
+    apply: Apply = False,
+) -> None:
+    cachix_setup_steps = _cachix_setup_steps(
+        signing_key_file=cachix_signing_key_file,
+        auth_token_file=cachix_auth_token_file,
+    )
     with contextlib.redirect_stdout(sys.stderr):
         rows = {
             repo_name: [
@@ -296,15 +349,28 @@ def _rounds(*, claude_private_key: ClaudeAppPrivateKey, apply: Apply = False) ->
                 _claude_setup_cell(
                     repo_name, claude_private_key=claude_private_key, apply=apply
                 ),
+                _changes_cell(
+                    _sync(repo_name=repo_name, steps=cachix_setup_steps, apply=apply)
+                )
+                if "cachix-setup" in opt_ins
+                else _Cell(text="-", ok=True),
+                # After the operations, so as to show their results.
                 _survey_cell(repo_name, describe=survey.collaborators),
                 _survey_cell(repo_name, describe=survey.secret_names),
             ]
-            for repo_name in rounds.REPOS
+            for repo_name, opt_ins in rounds.REPOS.items()
         }
     print(
         rounds.format_table(
             [
-                ["repo", "baseline", "claude-setup", "collaborators", "secrets"],
+                [
+                    "repo",
+                    "baseline",
+                    "claude-setup",
+                    "cachix-setup",
+                    "collaborators",
+                    "secrets",
+                ],
                 *(
                     [repo_name] + [cell.text for cell in cells]
                     for repo_name, cells in rows.items()
