@@ -1,14 +1,18 @@
-"""Move Cachix credentials into an environment only the default branch can use.
+"""Move secrets into an environment only the default branch can use.
 
-Creates a "cachix" environment whose only deployment branch is the default
-branch, gives it the CACHIX_SIGNING_KEY and CACHIX_AUTH_TOKEN secrets, and
-then deletes any repository secrets of those names. Workflow jobs that use the
-secrets need `environment: cachix`.
+Creates a "default-branch" environment whose only deployment branch is the
+repo's default branch, and sets the named secrets on it. Workflow jobs that
+use the secrets need `environment: default-branch`. Repository secrets of the
+same names are left alone, for you to delete once workflows use the
+environment's.
 
-Both secrets are needed to push to a cache whose signing key you hold: the
-auth token to upload, and the signing key to sign. (See the descriptions of
-authToken and signingKey in
-https://github.com/cachix/cachix-action/blob/master/action.yml.)
+The environment is named for who can use it rather than what for, so that
+one environment can hold all of a repo's secrets that only merged code
+should see. (A job can only use one environment.)
+
+Each secret's value is read from SECRETS_DIR/OWNER/REPO/NAME if that exists,
+and otherwise from SECRETS_DIR/NAME, so secrets shared between repos only
+need one file.
 
 GitHub never reveals secret values, so an existing environment secret counts
 as in sync whatever its value; delete it by hand to replace it.
@@ -20,6 +24,8 @@ protected by rulesets, and allows every branch if none count. (See
 https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments.)
 """
 
+import pathlib
+from collections.abc import Collection, Mapping
 from typing import Literal
 
 import pydantic
@@ -27,7 +33,19 @@ import pydantic
 from repo_maintenance import github, plan
 
 # Used in URL paths unescaped, so must be URL-safe.
-ENVIRONMENT = "cachix"
+ENVIRONMENT = "default-branch"
+
+
+def secret_values(
+    secrets_dir: pathlib.Path, *, repo_name: str, names: Collection[str]
+) -> dict[str, pydantic.SecretStr]:
+    """Each secret's value, from the repo's directory or else the shared one."""
+
+    def path(name: str) -> pathlib.Path:
+        repo_path = secrets_dir / repo_name / name
+        return repo_path if repo_path.exists() else secrets_dir / name
+
+    return {name: pydantic.SecretStr(path(name).read_text().strip()) for name in names}
 
 
 class BranchPolicySelection(plan.WrittenWhole):
@@ -77,13 +95,9 @@ class DeploymentBranchPolicyList(pydantic.BaseModel):
 
 
 def step(
-    repo: plan.Repository,
-    *,
-    signing_key: pydantic.SecretStr,
-    auth_token: pydantic.SecretStr,
+    repo: plan.Repository, *, secrets: Mapping[str, pydantic.SecretStr]
 ) -> list[plan.Change]:
-    """In order, so that repository secrets only go once all the others are set."""
-    secrets = {"CACHIX_SIGNING_KEY": signing_key, "CACHIX_AUTH_TOKEN": auth_token}
+    """In order, so that the environment exists before we set its secrets."""
     environment_path = f"/repos/{repo.full_name}/environments/{ENVIRONMENT}"
     return (
         _environment(environment_path)
@@ -93,7 +107,6 @@ def step(
             for name, value in secrets.items()
             for change in _environment_secret(environment_path, name=name, value=value)
         ]
-        + [change for name in secrets for change in _repository_secret(repo, name=name)]
     )
 
 
@@ -190,17 +203,5 @@ def _environment_secret(
                 public_key_path=f"{environment_path}/secrets/public-key",
                 value=value,
             ),
-        )
-    ]
-
-
-def _repository_secret(repo: plan.Repository, *, name: str) -> list[plan.Change]:
-    path = f"/repos/{repo.full_name}/actions/secrets/{name}"
-    if not _exists(path):
-        return []
-    return [
-        plan.Change(
-            description=f"delete repository secret {name}",
-            action=plan.ApiCall(method="DELETE", path=path),
         )
     ]
