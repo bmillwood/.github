@@ -23,10 +23,12 @@ class Visit:
 # signingKey in https://github.com/cachix/cachix-action/blob/master/action.yml.)
 CACHIX = frozenset({"CACHIX_AUTH_TOKEN", "CACHIX_SIGNING_KEY"})
 
+HACKAGE = frozenset({"HACKAGE_AUTH_TOKEN"})
+
 REPOS: dict[str, Visit] = {
     "bmillwood/.github": Visit(),
     "bmillwood/amber.rpm.cc": Visit(),
-    "bmillwood/bluesky-tools": Visit(),
+    "bmillwood/bluesky-tools": Visit(default_branch_secrets=HACKAGE),
     "bmillwood/delivery-status-notification": Visit(),
     "bmillwood/freecell": Visit(default_branch_secrets=CACHIX),
     "bmillwood/igzing": Visit(default_branch_secrets=CACHIX),
