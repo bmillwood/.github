@@ -27,8 +27,8 @@ from repo_maintenance import (
     app_installation,
     baseline,
     branch_protection,
-    cachix_setup,
     claude_setup,
+    default_branch_environment,
     github,
     plan,
     rounds,
@@ -220,42 +220,39 @@ def _claude_setup(
     )
 
 
-CachixSigningKeyFile = Annotated[
-    cyclopts.types.ExistingFile,
-    cyclopts.Parameter(help="File containing the Cachix signing key."),
-]
-CachixAuthTokenFile = Annotated[
-    cyclopts.types.ExistingFile,
-    cyclopts.Parameter(help="File containing a Cachix auth token that can push."),
+SecretsDir = Annotated[
+    cyclopts.types.ExistingDirectory,
+    cyclopts.Parameter(
+        help="Directory of secret values, as OWNER/REPO/NAME or (shared) NAME."
+    ),
 ]
 
 
-def _cachix_setup_steps(
-    *, signing_key_file: pathlib.Path, auth_token_file: pathlib.Path
-) -> list[plan.Step]:
-    signing_key = pydantic.SecretStr(signing_key_file.read_text().strip())
-    auth_token = pydantic.SecretStr(auth_token_file.read_text().strip())
-    return [
-        lambda repo: cachix_setup.step(
-            repo, signing_key=signing_key, auth_token=auth_token
-        )
-    ]
-
-
-@app.command(help=cachix_setup.__doc__)
-def _cachix_setup(
+@app.command(help=default_branch_environment.__doc__)
+def _default_branch_environment(
     *repos: Repo,
-    signing_key_file: CachixSigningKeyFile,
-    auth_token_file: CachixAuthTokenFile,
+    secrets_dir: SecretsDir,
+    secret: Annotated[
+        tuple[str, ...],
+        cyclopts.Parameter(
+            negative=(),
+            help="Name of a secret to set on the environment. Can be repeated.",
+        ),
+    ],
     all_owned_by: AllOwnedBy = (),
     apply: Apply = False,
 ) -> None:
     _run(
         repos=repos,
         owners=all_owned_by,
-        steps=_cachix_setup_steps(
-            signing_key_file=signing_key_file, auth_token_file=auth_token_file
-        ),
+        steps=[
+            lambda repo: default_branch_environment.step(
+                repo,
+                secrets=default_branch_environment.secret_values(
+                    secrets_dir, repo_name=repo.full_name, names=secret
+                ),
+            )
+        ],
         apply=apply,
     )
 
@@ -332,14 +329,16 @@ def _survey_cell(repo_name: str, *, describe: Callable[[str], frozenset[str]]) -
 def _rounds(
     *,
     claude_private_key: ClaudeAppPrivateKey,
-    cachix_signing_key_file: CachixSigningKeyFile,
-    cachix_auth_token_file: CachixAuthTokenFile,
+    secrets_dir: SecretsDir,
     apply: Apply = False,
 ) -> None:
-    cachix_setup_steps = _cachix_setup_steps(
-        signing_key_file=cachix_signing_key_file,
-        auth_token_file=cachix_auth_token_file,
-    )
+    # All read up front, so that a missing file stops us before we start.
+    default_branch_secrets = {
+        repo_name: default_branch_environment.secret_values(
+            secrets_dir, repo_name=repo_name, names=visit.default_branch_secrets
+        )
+        for repo_name, visit in rounds.REPOS.items()
+    }
     with contextlib.redirect_stdout(sys.stderr):
         rows = {
             repo_name: [
@@ -350,15 +349,23 @@ def _rounds(
                     repo_name, claude_private_key=claude_private_key, apply=apply
                 ),
                 _changes_cell(
-                    _sync(repo_name=repo_name, steps=cachix_setup_steps, apply=apply)
+                    _sync(
+                        repo_name=repo_name,
+                        steps=[
+                            lambda repo: default_branch_environment.step(
+                                repo, secrets=default_branch_secrets[repo.full_name]
+                            )
+                        ],
+                        apply=apply,
+                    )
                 )
-                if "cachix-setup" in opt_ins
+                if visit.default_branch_secrets
                 else _Cell(text="-", ok=True),
                 # After the operations, so as to show their results.
                 _survey_cell(repo_name, describe=survey.collaborators),
                 _survey_cell(repo_name, describe=survey.secret_names),
             ]
-            for repo_name, opt_ins in rounds.REPOS.items()
+            for repo_name, visit in rounds.REPOS.items()
         }
     print(
         rounds.format_table(
@@ -367,7 +374,7 @@ def _rounds(
                     "repo",
                     "baseline",
                     "claude-setup",
-                    "cachix-setup",
+                    "default-branch env",
                     "collaborators",
                     "secrets",
                 ],
