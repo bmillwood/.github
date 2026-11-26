@@ -18,9 +18,6 @@ branches only", because GitHub doesn't say whether that counts branches
 protected by rulesets, and allows every branch if none count. (See
 "Deployment branches and tags" in
 https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments.)
-
-The environment is assumed to be ours alone: updating its branch policy
-may reset settings that we don't manage, such as required reviewers.
 """
 
 from typing import Literal
@@ -39,6 +36,8 @@ class BranchPolicySelection(plan.WrittenWhole):
     This is what GitHub calls an environment's deployment_branch_policy, but
     it isn't a DeploymentBranchPolicy. It says whether to allow protected
     branches, or those matching the environment's deployment branch policies.
+    Exactly one of the booleans must be true -- to remove all restrictions, you
+    send null instead of this object.
     https://docs.github.com/en/rest/deployments/environments
     """
 
@@ -130,6 +129,10 @@ def _environment(environment_path: str) -> list[plan.Change]:
             action=plan.ApiCall(
                 method="PUT",
                 path=environment_path,
+                # Weirdly, this PUT seems to operate more like a PATCH,
+                # updating only the fields we name rather than replacing the
+                # whole object. The docs don't explicitly clarify this, it's
+                # inferred from observations.
                 body={"deployment_branch_policy": want.model_dump()},
             ),
         )
