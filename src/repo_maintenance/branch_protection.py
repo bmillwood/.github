@@ -13,25 +13,17 @@ import pydantic
 
 from repo_maintenance import github, plan
 
-# Models we compare against our desired state forbid extra fields, so that a
-# setting we don't know about can't make us think a repo is in sync when it
-# isn't.
 
-
-class Strict(pydantic.BaseModel):
-    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
-
-
-class RefNameCondition(Strict):
+class RefNameCondition(plan.WrittenWhole):
     include: list[str]
     exclude: list[str]
 
 
-class Conditions(Strict):
+class Conditions(plan.WrittenWhole):
     ref_name: RefNameCondition
 
 
-class BypassActor(Strict):
+class BypassActor(plan.WrittenWhole):
     actor_id: int | None
     actor_type: Literal[
         "Integration",
@@ -44,15 +36,15 @@ class BypassActor(Strict):
     bypass_mode: Literal["always", "pull_request", "exempt"]
 
 
-class DeletionRule(Strict):
+class DeletionRule(plan.WrittenWhole):
     type: Literal["deletion"] = "deletion"
 
 
-class NonFastForwardRule(Strict):
+class NonFastForwardRule(plan.WrittenWhole):
     type: Literal["non_fast_forward"] = "non_fast_forward"
 
 
-class PullRequestParameters(Strict):
+class PullRequestParameters(plan.WrittenWhole):
     required_approving_review_count: int
     dismiss_stale_reviews_on_push: bool
     required_reviewers: list[pydantic.JsonValue]
@@ -63,7 +55,7 @@ class PullRequestParameters(Strict):
     allowed_merge_methods: list[Literal["merge", "squash", "rebase"]]
 
 
-class PullRequestRule(Strict):
+class PullRequestRule(plan.WrittenWhole):
     type: Literal["pull_request"] = "pull_request"
     parameters: PullRequestParameters
 

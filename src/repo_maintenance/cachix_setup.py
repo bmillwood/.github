@@ -14,6 +14,9 @@ as in sync whatever its value; delete it by hand to replace it.
 The environment allows the default branch by name rather than "protected
 branches only", because GitHub doesn't say whether that counts branches
 protected by rulesets, and allows every branch if none count.
+
+The environment is assumed to be ours alone: updating its branch policy
+may reset settings that we don't manage, such as required reviewers.
 """
 
 import pydantic
@@ -23,7 +26,7 @@ from repo_maintenance import github, plan
 ENVIRONMENT = "cachix"
 
 
-class BranchPolicy(pydantic.BaseModel):
+class BranchPolicy(plan.WrittenWhole):
     """As in an environment's deployment_branch_policy."""
 
     protected_branches: bool

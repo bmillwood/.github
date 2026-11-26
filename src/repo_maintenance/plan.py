@@ -15,6 +15,18 @@ class CannotPlan(Exception):
     """The repo is in a state we don't know how to bring in line."""
 
 
+class WrittenWhole(pydantic.BaseModel):
+    """Base for models of objects that we write whole, replacing what's there.
+
+    Extra fields are forbidden, so that a field we don't know about stops us
+    planning, rather than being ignored when we read the object and then
+    silently reset when we write it. Ignoring it would also hide it from our
+    diffs, and from the comparison that says whether a repo is in sync.
+    """
+
+    model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
+
+
 class Repository(pydantic.BaseModel):
     id: int
     full_name: str
