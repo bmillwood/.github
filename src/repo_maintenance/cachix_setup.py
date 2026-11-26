@@ -6,47 +6,75 @@ then deletes any repository secrets of those names. Workflow jobs that use the
 secrets need `environment: cachix`.
 
 Both secrets are needed to push to a cache whose signing key you hold: the
-auth token to upload, and the signing key to sign.
+auth token to upload, and the signing key to sign. (See the descriptions of
+authToken and signingKey in
+https://github.com/cachix/cachix-action/blob/master/action.yml.)
 
 GitHub never reveals secret values, so an existing environment secret counts
 as in sync whatever its value; delete it by hand to replace it.
 
 The environment allows the default branch by name rather than "protected
 branches only", because GitHub doesn't say whether that counts branches
-protected by rulesets, and allows every branch if none count.
+protected by rulesets, and allows every branch if none count. (See
+"Deployment branches and tags" in
+https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments.)
 
 The environment is assumed to be ours alone: updating its branch policy
 may reset settings that we don't manage, such as required reviewers.
 """
 
+from typing import Literal
+
 import pydantic
 
 from repo_maintenance import github, plan
 
+# Used in URL paths unescaped, so must be URL-safe.
 ENVIRONMENT = "cachix"
 
 
-class BranchPolicy(plan.WrittenWhole):
-    """As in an environment's deployment_branch_policy."""
+class BranchPolicySelection(plan.WrittenWhole):
+    """Which kind of deployment branch policies an environment uses.
+
+    This is what GitHub calls an environment's deployment_branch_policy, but
+    it isn't a DeploymentBranchPolicy. It says whether to allow protected
+    branches, or those matching the environment's deployment branch policies.
+    https://docs.github.com/en/rest/deployments/environments
+    """
 
     protected_branches: bool
     custom_branch_policies: bool
 
 
 class Environment(pydantic.BaseModel):
-    deployment_branch_policy: BranchPolicy | None
+    """An environment as we GET it, only the part we look at.
+
+    Not WrittenWhole, and not what we PUT either: the PUT body has a different
+    shape (e.g. wait_timer is top-level there, but under protection_rules
+    here), of which we only send deployment_branch_policy.
+    https://docs.github.com/en/rest/deployments/environments
+    """
+
+    deployment_branch_policy: BranchPolicySelection | None
 
 
-class NamePattern(pydantic.BaseModel):
-    """A deployment branch (or tag) policy, as in .../deployment-branch-policies."""
+class DeploymentBranchPolicy(plan.WrittenWhole):
+    """A name pattern for branches or tags that may deploy to an environment.
+
+    This is the shape we GET. We POST only name and type, and GitHub adds the
+    IDs. We never update one in place, only DELETE and POST, so this is
+    effectively WrittenWhole.
+    https://docs.github.com/en/rest/deployments/branch-policies
+    """
 
     id: int
+    node_id: str
     name: str
-    type: str
+    type: Literal["branch", "tag"]
 
 
-class NamePatternList(pydantic.BaseModel):
-    branch_policies: list[NamePattern]
+class DeploymentBranchPolicyList(pydantic.BaseModel):
+    branch_policies: list[DeploymentBranchPolicy]
 
 
 def step(
@@ -60,7 +88,7 @@ def step(
     environment_path = f"/repos/{repo.full_name}/environments/{ENVIRONMENT}"
     return (
         _environment(environment_path)
-        + _name_patterns(environment_path, branch=repo.default_branch)
+        + _deployment_branch_policies(environment_path, branch=repo.default_branch)
         + [
             change
             for name, value in secrets.items()
@@ -79,7 +107,7 @@ def _exists(path: str) -> bool:
 
 
 def _environment(environment_path: str) -> list[plan.Change]:
-    want = BranchPolicy(protected_branches=False, custom_branch_policies=True)
+    want = BranchPolicySelection(protected_branches=False, custom_branch_policies=True)
     try:
         have = Environment.model_validate_json(
             github.request("GET", environment_path)
@@ -108,26 +136,30 @@ def _environment(environment_path: str) -> list[plan.Change]:
     ]
 
 
-def _name_patterns(environment_path: str, *, branch: str) -> list[plan.Change]:
+def _deployment_branch_policies(
+    environment_path: str, *, branch: str
+) -> list[plan.Change]:
     path = f"{environment_path}/deployment-branch-policies"
     try:
         have = [
-            pattern
+            policy
             for page in github.get_pages(f"{path}?per_page=100")
-            for pattern in NamePatternList.model_validate_json(page).branch_policies
+            for policy in DeploymentBranchPolicyList.model_validate_json(
+                page
+            ).branch_policies
         ]
     except github.NotFound:
         # The environment doesn't exist yet.
         have = []
     changes = [
         plan.Change(
-            description=f"remove deployment {pattern.type} pattern {pattern.name!r}",
-            action=plan.ApiCall(method="DELETE", path=f"{path}/{pattern.id}"),
+            description=f"remove deployment {policy.type} policy {policy.name!r}",
+            action=plan.ApiCall(method="DELETE", path=f"{path}/{policy.id}"),
         )
-        for pattern in have
-        if (pattern.type, pattern.name) != ("branch", branch)
+        for policy in have
+        if (policy.type, policy.name) != ("branch", branch)
     ]
-    if not any((pattern.type, pattern.name) == ("branch", branch) for pattern in have):
+    if not any((policy.type, policy.name) == ("branch", branch) for policy in have):
         changes.append(
             plan.Change(
                 description=f"allow deployments from {branch}",
@@ -142,6 +174,7 @@ def _name_patterns(environment_path: str, *, branch: str) -> list[plan.Change]:
 def _environment_secret(
     environment_path: str, *, name: str, value: pydantic.SecretStr
 ) -> list[plan.Change]:
+    # https://docs.github.com/en/rest/actions/secrets
     path = f"{environment_path}/secrets/{name}"
     # Also 404s if the environment doesn't exist yet.
     if _exists(path):

@@ -114,7 +114,10 @@ class _PublicKey(pydantic.BaseModel):
 
 
 def put_secret(path: str, *, public_key_path: str, value: pydantic.SecretStr) -> None:
-    """Create or update an Actions secret, which GitHub wants sealed to its key."""
+    """Create or update an Actions secret, which GitHub wants sealed to its key.
+
+    https://docs.github.com/en/rest/guides/encrypting-secrets-for-the-rest-api
+    """
     public_key = _PublicKey.model_validate_json(request("GET", public_key_path))
     sealed = nacl.public.SealedBox(
         nacl.public.PublicKey(base64.b64decode(public_key.key))

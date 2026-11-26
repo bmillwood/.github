@@ -107,7 +107,7 @@ def _linked_project_count(repo: plan.Repository) -> int:
     return _ProjectsQuery.model_validate(data).repository.projectsV2.totalCount
 
 
-class ForkPrApproval(pydantic.BaseModel):
+class ForkPrApproval(plan.WrittenWhole):
     """As in GET/PUT /repos/{repo}/actions/permissions/fork-pr-contributor-approval."""
 
     approval_policy: str
